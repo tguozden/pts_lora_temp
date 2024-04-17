@@ -1,3 +1,22 @@
+/*
+ * para hacer: ver si funciona el voltaje de referencia
+ * long readVcc() {
+  long result;
+  // Read 1.1V reference against AVcc
+  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+  delay(2); // Wait for Vref to settle
+  ADCSRA |= _BV(ADSC); // Convert
+  while (bit_is_set(ADCSRA, ADSC));
+  result = ADCL;
+  result |= ADCH << 8;
+  result = 1126400L / result; // Back-calculate AVcc in mV
+  return result;
+}
+
+ *
+ *2- si batería <3.65 y panel <4 no mandar
+
+*/
 #include "LoRaWan_APP.h"
 #include "Arduino.h"
 
@@ -6,13 +25,21 @@
 #include <DallasTemperature.h>
 
 #include <CayenneLPP.h>
+
+
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  1790        /* Time ESP32 will go to sleep (in seconds) */
+RTC_DATA_ATTR int bootCount = 1;
+
+
+
 CayenneLPP lpp(51);
 
 //Pines de entrada
 #define TEMP_SENSOR_PIN 13
 #define VOLT_SOLAR_PIN 32
 #define VOLT_BAT_PIN 33
-#define SLEEP_TIME 5*1000000 //tiempo entre envíos en nseg
+
 
 //Inicio del modulo de temperatura
 OneWire oneWire(TEMP_SENSOR_PIN);
@@ -22,7 +49,7 @@ DallasTemperature sensor(&oneWire);
 
 #define RF_FREQUENCY                                915000000 // Hz
 
-#define TX_OUTPUT_POWER                             22        // dBm
+#define TX_OUTPUT_POWER                             10       // dBm
 
 #define LORA_BANDWIDTH                              0         // [0: 125 kHz,
                                                               //  1: 250 kHz,
@@ -45,7 +72,7 @@ DallasTemperature sensor(&oneWire);
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
 
-int txNumber;
+
 
 bool lora_idle=true;
 
@@ -57,7 +84,6 @@ void setup() {
     Serial.begin(115200);
     Mcu.begin();
 	
-    txNumber=0;
 
     RadioEvents.TxDone = OnTxDone;
     RadioEvents.TxTimeout = OnTxTimeout;
@@ -72,9 +98,10 @@ void setup() {
     
     //Inicializacion del modulo de temperatura
     sensor.begin();
-
-    esp_sleep_enable_timer_wakeup(SLEEP_TIME);
-
+    bootCount = (bootCount+1)%100;
+    
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    
    }
 
 
@@ -83,7 +110,7 @@ void loop()
 {
 	if(lora_idle == true)
 	{
-    delay(1000);
+    delay(5000);
 		
     lpp.reset();
     ///Leer temperatura
@@ -92,7 +119,7 @@ void loop()
     lpp.addTemperature(1, temperature);
     ///Lectura de la bateria
     float volt_bat = 2*3.3*analogRead(VOLT_BAT_PIN)/4096;
-    //lpp.addAnalogInput(2, volt_bat);
+    lpp.addAnalogInput(2, volt_bat);
     ///Lectura del panel
     float volt_solar = 2*3.3*analogRead(VOLT_SOLAR_PIN)/4096;
     lpp.addAnalogInput(3, volt_solar);
@@ -103,10 +130,9 @@ void loop()
     Serial.println(volt_bat);
     Serial.print("Voltage panel solar: ");
     Serial.println(volt_solar);
-    txNumber = (txNumber+1)%100;
     Serial.print("Paquete número: ");
-    Serial.println(txNumber, DEC);
-    lpp.addDigitalInput(4, txNumber);   //
+    Serial.println(bootCount, DEC);
+    lpp.addDigitalInput(4, bootCount);   //
 
     memcpy(txpacket, lpp.getBuffer(), lpp.getSize());
     Serial.print(" | ");  //https://community.mydevices.com/t/read-lora-cayennelpp-message-and-decode/16273/18
@@ -119,12 +145,14 @@ void loop()
     Serial.print("|");
     
     Radio.Send( (uint8_t *)lpp.getBuffer(), lpp.getSize() ); //send the package out 
-
-
+    //delay(5000);// no le estaba dando tiempo!
+    //esp_deep_sleep_start();
     
+        
     lora_idle = false;
+    
 	}
-  Radio.IrqProcess( );
+  Radio.IrqProcess( );   // ? pa qué sirve
 }
 
 void OnTxDone( void )

@@ -3,10 +3,10 @@
 
 #include "ArduinoJson.h"
 #include <WiFi.h>
-WiFiClient client;
 
-#define ssid "Nahuel"
-#define password "MIC2018un+"
+
+#define ssid "bc811a"
+#define password "nachiketas"
 #define RF_FREQUENCY                                915000000 // Hz
 
 #define TX_OUTPUT_POWER                             14        // dBm
@@ -33,11 +33,13 @@ WiFiClient client;
 //Cayenne
 #include <CayenneLPP.h>
 
-//Inicio del objeto de cayenne
+//Variables globales
+
+//char txpacket[BUFFER_SIZE];
+char rxpacket[BUFFER_SIZE];   // esta se usa en .. ?
+
 CayenneLPP lpp(LORAWAN_APP_DATA_MAX_SIZE);
 
-char txpacket[BUFFER_SIZE];
-char rxpacket[BUFFER_SIZE];
 
 static RadioEvents_t RadioEvents;
 
@@ -46,6 +48,9 @@ int16_t txNumber;
 int16_t rssi;
 
 bool lora_idle = true;
+
+unsigned long lastConnectionTime = 0;
+
 
 void setup() {
     Serial.begin(115200);
@@ -127,42 +132,51 @@ void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
     root["rssi"]= rssi;
     serializeJsonPretty(root, Serial);
     Serial.println();
-  //https://la.mathworks.com/help/thingspeak/continuously-collect-data-and-bulk-update-a-thingspeak-channel-using-an-arduino-mkr1000-board-or-an-esp8266-board.html     
+ 
     //Serial.printf("\r\nreceived packet \"%s\" with rssi %d , length %d\r\n",rxpacket,,rxSize);
     lora_idle = true;
 
-      char aux[100];
-      if (client.connect("api.thingspeak.com",80)) {  //   "184.106.153.149" or api.thingspeak.com
-        String postStr = "HB61WTMZM5G2J3MT";
-        postStr +="&temperature_1=";
-        sprintf(aux,"%f", (float)root["temperature_1"]); 
-        Serial.println(aux);
-        postStr +=aux;
-        postStr +="&analog_in_2=";
-        sprintf(aux,"%f", (float)root["analog_in_2"]); 
-        
-        postStr +=aux;
-        postStr +="&analog_in_3=";
-        sprintf(aux,"%f", (float)root["analog_in_3"]); 
-        
-        postStr +=aux;
-        postStr += "&digital_in_4=";
-        sprintf(aux,"%d", (int)root["digital_in_4"]); 
-        postStr +=aux;
-        postStr += "&rssi=";
-        sprintf(aux,"%d", (int)root["rssi"]); 
-        postStr +=aux;
-       Serial.println(postStr);
- 
-       client.print("POST /update HTTP/1.1\n"); 
-       client.print("Host: api.thingspeak.com\n"); 
-       client.print("Connection: close\n"); 
-       client.print("X-THINGSPEAKAPIKEY: HB61WTMZM5G2J3MT\n"); 
-       client.print("Content-Type: application/x-www-form-urlencoded\n"); 
-       client.print("Content-Length: "); 
-       client.print(postStr.length()); 
-       client.print("\n\n"); 
-       client.print(postStr);
-      }
+    httpRequest((float)root["temperature_1"], (float)root["analog_in_2"], (float)root["analog_in_3"], (int)root["digital_in_4"], (int)root["rssi"] );
+       
+      
+}
+void httpRequest(float temp, float vbat, float vsol, int npaquete, int rssi) {
+
+    WiFiClient client;
     
+    if (!client.connect("api.thingspeak.com", 80)){
+      
+        Serial.println("Connection failed");
+        lastConnectionTime = millis();
+        client.stop();
+        return;     
+    }
+    
+    else{
+        
+        // Create data string to send to ThingSpeak.
+        String data = "field1=" + String(temp) + "&field2=" + String(vbat); //shows how to include additional field data in http post
+        data += "&field3=" + String(vsol);
+        data += "&field4=" + String(npaquete);
+        data += "&field5=" + String(rssi);
+        // POST data to ThingSpeak.
+        if (client.connect("api.thingspeak.com", 80)) {
+          
+            client.println("POST /update HTTP/1.1");
+            client.println("Host: api.thingspeak.com");
+            client.println("Connection: close");
+            client.println("User-Agent: ESP32WiFi/1.1");
+            client.println("X-THINGSPEAKAPIKEY: HB61WTMZM5G2J3MT");
+            client.println("Content-Type: application/x-www-form-urlencoded");
+            client.print("Content-Length: ");
+            client.print(data.length());
+            client.print("\n\n");
+            client.print(data);
+            
+            //Serial.println("RSSI = " + String(field1Data));
+            lastConnectionTime = millis();   
+            delay(250);
+        }
+    }
+    client.stop();
 }
